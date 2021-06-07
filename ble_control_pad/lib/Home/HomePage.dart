@@ -15,6 +15,7 @@ import 'package:control_pad/control_pad.dart';
 import 'package:ble_control_pad/ConnectionPage/infopage.dart';
 import 'package:ble_control_pad/global.dart' as global;
 import 'package:flutter_tts/flutter_tts.dart';
+import 'package:flutter_advanced_switch/flutter_advanced_switch.dart';
 
 enum TtsState { playing, stopped, paused, continued }
 
@@ -27,16 +28,18 @@ class MainPage extends StatefulWidget {
 }
 
 class _MainPage extends State<MainPage> {
+  final _controller04 = AdvancedSwitchController();
   BluetoothConnection connection;
   bool isConnecting = true;
   bool get isConnected => connection != null && connection.isConnected;
-
   bool isDisconnecting = false;
   double inputend = -0.9;
   double inputstart = 0;
   double outputend = 10;
   double outputstart = 0;
-
+  String _messageBuffer = '';
+  Timer stoptimer;
+  bool timeron = false;
   FlutterTts flutterTts;
   TtsState ttsState = TtsState.stopped;
 
@@ -60,7 +63,10 @@ class _MainPage extends State<MainPage> {
             toastLength: Toast.LENGTH_SHORT,
             timeInSecForIosWeb: 2);
       });
-
+      _controller04.addListener(() {
+        final currentValue = _controller04.value;
+        currentValue == true ? _vehicleon() : _vehicleoff();
+      });
       connection.input.listen(_onDataReceived).onDone(() {
         if (isDisconnecting) {
           print('Disconnecting locally!');
@@ -107,6 +113,16 @@ class _MainPage extends State<MainPage> {
     });
   }
 
+  void _vehicleon() {
+    _sendMessage("O");
+    _starttimer();
+  }
+
+  void _vehicleoff() {
+    _sendMessage("N");
+    _stoptimer();
+  }
+
   Future _getDefaultEngine() async {
     var engine = await flutterTts.getDefaultEngine;
     if (engine != null) {
@@ -123,6 +139,8 @@ class _MainPage extends State<MainPage> {
       connection = null;
     }
     flutterTts.stop();
+    stoptimer.cancel();
+    _controller04.dispose();
     super.dispose();
   }
 
@@ -221,6 +239,39 @@ class _MainPage extends State<MainPage> {
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               Padding(
+                padding: EdgeInsets.all(10),
+                child: Card(
+                  elevation: 10,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(15),
+                  ),
+                  child: SizedBox(
+                    width: MediaQuery.of(context).size.width,
+                    height: 50,
+                    child: Center(
+                        child: Text(global.inmessage,
+                            style: TextStyle(fontSize: 15))),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: EdgeInsets.all(5),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    _buildLabel("Vehicle"),
+                    AdvancedSwitch(
+                      activeChild: Text('ON'),
+                      inactiveChild: Text('OFF'),
+                      borderRadius: BorderRadius.circular(5),
+                      width: 76,
+                      controller: _controller04,
+                    ),
+                  ],
+                ),
+              ),
+              Padding(
                 padding: EdgeInsets.all(5),
                 child: PadButtonsView(
                   padButtonPressedCallback: (buttonIndex, gesture) {
@@ -239,54 +290,29 @@ class _MainPage extends State<MainPage> {
                   },
                 ),
               ),
-              Padding(
-                padding: EdgeInsets.all(10),
-                child: Card(
-                  elevation: 10,
-                  color: Colors.amber,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(15),
-                  ),
-                  child: SizedBox(
-                    width: 100,
-                    height: 50,
-                    child: Center(
-                        child: Text(global.inmessage,
-                            style: TextStyle(fontSize: 10))),
-                  ),
-                ),
+              SizedBox(
+                height: 20,
               ),
               Padding(
                 padding: EdgeInsets.all(5),
-                child: JoystickView(onDirectionChanged:
-                    (double degrees, double distanceFromCenter) {
-                  double radians = degrees * pi / 180;
-                  double x = cos(radians) * distanceFromCenter;
-                  double y = sin(radians) * distanceFromCenter;
-                  double inputrange = inputend - inputstart;
-                  double outputrange = outputend - outputstart;
-                  double outputx =
-                      (x - inputstart) * outputrange / inputrange + outputstart;
-                  double outputy =
-                      (y - inputstart) * outputrange / inputrange + outputstart;
-                  // print('X=${outputx.round()},Y=${outputy.round()}');
-                  if (outputx.round() < -5) {
-                    _sendMessage(global.commands[4]);
-                  }
-                  if (outputx.round() > 5) {
-                    _sendMessage(global.commands[5]);
-                  }
-                  if (outputy.round() < -5) {
-                    _sendMessage(global.commands[6]);
-                  }
-                  if (outputy.round() > 5) {
-                    _sendMessage(global.commands[7]);
-                  }
-                  if (outputx.round() == 0 && outputy.round() == 0) {
-                    _sendMessage(global.commands[4]);
-                    //Future.delayed(Duration(milliseconds: 100), () {});
-                  }
-                }),
+                child: JoystickView(
+                    interval: Duration(milliseconds: 50),
+                    onDirectionChanged:
+                        (double degrees, double distanceFromCenter) {
+                      double radians = degrees * pi / 180;
+                      double x = cos(radians) * distanceFromCenter;
+                      double y = sin(radians) * distanceFromCenter;
+                      double inputrange = inputend - inputstart;
+                      double outputrange = outputend - outputstart;
+                      double outputx =
+                          (x - inputstart) * outputrange / inputrange +
+                              outputstart;
+                      double outputy =
+                          (y - inputstart) * outputrange / inputrange +
+                              outputstart;
+                      // print('X=${outputx.round()},Y=${outputy.round()}');
+                      _processJoyPadv(outputx, outputy);
+                    }),
               ),
             ],
           ),
@@ -301,71 +327,91 @@ class _MainPage extends State<MainPage> {
             mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Padding(
-                padding: EdgeInsets.all(5),
-                child: PadButtonsView(
-                  padButtonPressedCallback: (buttonIndex, gesture) {
-                    buttonIndex == 0
-                        ? _sendMessage(global.commands[0])
-                        : buttonIndex == 1
-                            ? _sendMessage(global.commands[1])
-                            : buttonIndex == 2
-                                ? _sendMessage(global.commands[2])
-                                : buttonIndex == 3
-                                    ? _sendMessage(global.commands[3])
-                                    // ignore: unnecessary_statements
-                                    : null;
-                  },
-                ),
+              Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Padding(
+                    padding: EdgeInsets.all(5),
+                    child: PadButtonsView(
+                      padButtonPressedCallback: (buttonIndex, gesture) {
+                        buttonIndex == 0
+                            ? _sendMessage(global.commands[0])
+                            : buttonIndex == 1
+                                ? _sendMessage(global.commands[1])
+                                : buttonIndex == 2
+                                    ? _sendMessage(global.commands[2])
+                                    : buttonIndex == 3
+                                        ? _sendMessage(global.commands[3])
+                                        // ignore: unnecessary_statements
+                                        : null;
+                      },
+                    ),
+                  ),
+                ],
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                mainAxisAlignment: MainAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: EdgeInsets.all(5),
+                    child: Card(
+                      elevation: 10,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(15),
+                      ),
+                      child: SizedBox(
+                        width: 200,
+                        height: 50,
+                        child: Center(
+                            child: Text(global.inmessage,
+                                style: TextStyle(fontSize: 15))),
+                      ),
+                    ),
+                  ),
+                  SizedBox(
+                    height: 80,
+                  ),
+                  Padding(
+                    padding: EdgeInsets.all(5),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        _buildLabel("Vehicle"),
+                        AdvancedSwitch(
+                          activeChild: Text('ON'),
+                          inactiveChild: Text('OFF'),
+                          borderRadius: BorderRadius.circular(5),
+                          width: 76,
+                          controller: _controller04,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
               Padding(
-                padding: EdgeInsets.all(10),
-                child: Card(
-                  elevation: 10,
-                  color: Colors.amber,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(15),
-                  ),
-                  child: SizedBox(
-                    width: 100,
-                    height: 50,
-                    child: Center(
-                        child: Text(global.inmessage,
-                            style: TextStyle(fontSize: 10))),
-                  ),
-                ),
-              ),
-              Padding(
                 padding: EdgeInsets.all(5),
-                child: JoystickView(onDirectionChanged:
-                    (double degrees, double distanceFromCenter) {
-                  double radians = degrees * pi / 180;
-                  double x = cos(radians) * distanceFromCenter;
-                  double y = sin(radians) * distanceFromCenter;
-                  double inputrange = inputend - inputstart;
-                  double outputrange = outputend - outputstart;
-                  double outputx =
-                      (x - inputstart) * outputrange / inputrange + outputstart;
-                  double outputy =
-                      (y - inputstart) * outputrange / inputrange + outputstart;
-                  // print('X=${outputx.round()},Y=${outputy.round()}');
-                  if (outputx.round() < -5) {
-                    _sendMessage(global.commands[4]);
-                  }
-                  if (outputx.round() > 5) {
-                    _sendMessage(global.commands[5]);
-                  }
-                  if (outputy.round() < -5) {
-                    _sendMessage(global.commands[6]);
-                  }
-                  if (outputy.round() > 5) {
-                    _sendMessage(global.commands[7]);
-                  }
-                  if (outputx.round() == 0 && outputy.round() == 0) {
-                    _sendMessage(global.commands[4]);
-                    //Future.delayed(Duration(milliseconds: 100), () {});
-                  }
-                }),
+                child: JoystickView(
+                    interval: Duration(milliseconds: 50),
+                    onDirectionChanged:
+                        (double degrees, double distanceFromCenter) async {
+                      double radians = degrees * pi / 180;
+                      double x = cos(radians) * distanceFromCenter;
+                      double y = sin(radians) * distanceFromCenter;
+                      double inputrange = inputend - inputstart;
+                      double outputrange = outputend - outputstart;
+                      double outputx =
+                          (x - inputstart) * outputrange / inputrange +
+                              outputstart;
+                      double outputy =
+                          (y - inputstart) * outputrange / inputrange +
+                              outputstart;
+                      //print('X=${outputx.round()},Y=${outputy.round()}');
+                      _processJoyPadv(outputx, outputy);
+                    }),
               ),
             ],
           ),
@@ -374,7 +420,24 @@ class _MainPage extends State<MainPage> {
     }
   }
 
-  void _sendMessage(String text) async {
+  Widget _buildLabel(String value) {
+    return Container(
+      margin: EdgeInsets.only(
+        top: 5,
+        bottom: 5,
+      ),
+      child: Text(
+        '$value',
+        style: TextStyle(
+          fontWeight: FontWeight.w500,
+          fontSize: 10,
+          color: Colors.black,
+        ),
+      ),
+    );
+  }
+
+  _sendMessage(String text) async {
     text = text.trim();
     if (text.length > 0) {
       try {
@@ -382,13 +445,49 @@ class _MainPage extends State<MainPage> {
         await connection.output.allSent;
       } catch (e) {
         // Ignore error, but notify state
-        setState(() {});
+        setState(() {
+          Navigator.pushReplacement(
+              context, MaterialPageRoute(builder: (context) => ConnectPage()));
+        });
       }
     }
   }
 
+  void _processJoyPadv(double x, double y) {
+    if (x.round() > 5) {
+      _stoptimer();
+      _sendMessage(global.commands[4]);
+    } else if (x.round() < -5) {
+      _stoptimer();
+      _sendMessage(global.commands[5]);
+    } else if (y.round() > 5) {
+      _stoptimer();
+      _sendMessage(global.commands[6]);
+    } else if (y.round() < -5) {
+      _stoptimer();
+      _sendMessage(global.commands[7]);
+    } else {
+      _starttimer();
+    }
+  }
+
+  void _starttimer() {
+    if (timeron == false) {
+      timeron = true;
+      stoptimer = Timer.periodic(Duration(milliseconds: 500), (timer) {
+        _sendMessage(global.commands[8]);
+      });
+    }
+  }
+
+  void _stoptimer() {
+    if (timeron == true) {
+      timeron = false;
+      stoptimer.cancel();
+    }
+  }
+
   void _onDataReceived(Uint8List data) {
-    // Allocate buffer for parsed data
     int backspacesCounter = 0;
     data.forEach((byte) {
       if (byte == 8 || byte == 127) {
@@ -411,12 +510,20 @@ class _MainPage extends State<MainPage> {
         }
       }
     }
+    //end character
+    int index = buffer.indexOf('@'.codeUnitAt(0));
     String dataString = String.fromCharCodes(buffer);
-    //print(dataString);
-    setState(() {
-      global.inmessage = dataString;
-    });
-    _speak();
+    if (index > 0) {
+      _messageBuffer += dataString.substring(0, index);
+      print(_messageBuffer);
+      setState(() {
+        global.inmessage = _messageBuffer;
+      });
+      _messageBuffer = '';
+      _speak();
+    } else {
+      _messageBuffer = dataString;
+    }
   }
 
   Future _speak() async {
